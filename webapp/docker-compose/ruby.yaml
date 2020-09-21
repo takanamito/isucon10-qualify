@@ -16,6 +16,22 @@ services:
     ports:
       - "3306:3306"
 
+  mysql_b:
+    image: mysql:5.7
+    volumes:
+      - ../mysql-b/data:/var/lib/mysql
+      - ../mysql/db:/docker-entrypoint-initdb.d
+      - ../logs/mysql-b:/var/log/mysql
+      - ../../provisioning/ansible/roles/web-bootstrap/files/my.cnf:/etc/mysql/conf.d/my.cnf
+      - ../../provisioning/ansible/roles/web-bootstrap/files/slow-mysqld.cnf:/etc/mysql/conf.d/slowquery.cnf
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: isuumo
+      MYSQL_USER: isucon
+      MYSQL_PASSWORD: isucon
+    ports:
+      - "3307:3306"
+
   api-server:
     build: ../ruby
     entrypoint:
@@ -32,11 +48,13 @@ services:
       MYSQL_USER: isucon
       MYSQL_PASS: isucon
       MYSQL_HOST: mysql
+      MYSQL_B_HOST: mysql_b
       SERVER_PORT: 1323
     ports:
       - "1323:1323"
     depends_on:
       - mysql
+      - mysql_b
     command: bundle exec unicorn -c unicorn.conf.rb
 
   frontend:

@@ -24,6 +24,7 @@ class App < Sinatra::Base
     def db_info
       {
         host: ENV.fetch('MYSQL_HOST', '127.0.0.1'),
+        host_b: ENV.fetch('MYSQL_B_HOST', '127.0.0.1'),
         port: ENV.fetch('MYSQL_PORT', '3306'),
         username: ENV.fetch('MYSQL_USER', 'isucon'),
         password: ENV.fetch('MYSQL_PASS', 'isucon'),
@@ -31,8 +32,8 @@ class App < Sinatra::Base
       }
     end
 
-    def db
-      Thread.current[:db] ||= Mysql2::Client.new(
+    def db_estate
+      Thread.current[:db_estate] ||= Mysql2::Client.new(
         host: db_info[:host],
         port: db_info[:port],
         username: db_info[:username],
@@ -43,41 +44,91 @@ class App < Sinatra::Base
       )
     end
 
-    def transaction(name)
-      begin_transaction(name)
-      yield(name)
-      commit_transaction(name)
-    rescue Exception => e
-      logger.error "Failed to commit tx: #{e.inspect}"
-      rollback_transaction(name)
-      raise
-    ensure
-      ensure_to_abort_transaction(name)
+    def db_chair
+      Thread.current[:db_chair] ||= Mysql2::Client.new(
+          host: db_info[:host_b],
+          port: db_info[:port],
+          username: db_info[:username],
+          password: db_info[:password],
+          database: db_info[:database],
+          reconnect: true,
+          symbolize_keys: true,
+      )
     end
 
-    def begin_transaction(name)
+    def transaction_estate(name)
+      begin_transaction_estate(name)
+      yield(name)
+      commit_transaction_estate(name)
+    rescue Exception => e
+      logger.error "Failed to commit tx: #{e.inspect}"
+      rollback_transaction_estate(name)
+      raise
+    ensure
+      ensure_to_abort_transaction_estate(name)
+    end
+
+    def transaction_chair(name)
+      begin_transaction_chair(name)
+      yield(name)
+      commit_transaction_chair(name)
+    rescue Exception => e
+      logger.error "Failed to commit tx: #{e.inspect}"
+      rollback_transaction_chair(name)
+      raise
+    ensure
+      ensure_to_abort_transaction_chair(name)
+    end
+
+    def begin_transaction_estate(name)
       Thread.current[:db_transaction] ||= {}
-      db.query('BEGIN')
+      db_estate.query('BEGIN')
       Thread.current[:db_transaction][name] = :open
     end
 
-    def commit_transaction(name)
+    def begin_transaction_chair(name)
       Thread.current[:db_transaction] ||= {}
-      db.query('COMMIT')
+      db_chair.query('BEGIN')
+      Thread.current[:db_transaction][name] = :open
+    end
+
+    def commit_transaction_estate(name)
+      Thread.current[:db_transaction] ||= {}
+      db_estate.query('COMMIT')
       Thread.current[:db_transaction][name] = :nil
     end
 
-    def rollback_transaction(name)
+    def commit_transaction_chair(name)
       Thread.current[:db_transaction] ||= {}
-      db.query('ROLLBACK')
+      db_chair.query('COMMIT')
       Thread.current[:db_transaction][name] = :nil
     end
 
-    def ensure_to_abort_transaction(name)
+    def rollback_transaction_estate(name)
+      Thread.current[:db_transaction] ||= {}
+      db_estate.query('ROLLBACK')
+      Thread.current[:db_transaction][name] = :nil
+    end
+
+    def rollback_transaction_chair(name)
+      Thread.current[:db_transaction] ||= {}
+      db_chair.query('ROLLBACK')
+      Thread.current[:db_transaction][name] = :nil
+    end
+
+    def ensure_to_abort_transaction_estate(name)
       Thread.current[:db_transaction] ||= {}
       if in_transaction?(name)
         logger.warn "Transaction closed implicitly (#{$$}, #{Thread.current.object_id}): #{name}"
-        rollback_transaction(name)
+        rollback_transaction_estate(name)
+      end
+    end
+
+    def ensure_to_abort_transaction_chair(name)
+      Thread.current[:db_transaction] ||= {}
+      if in_transaction?(name)
+        logger.warn "Transaction closed implicitly (#{$$}, #{Thread.current.object_id}): #{name}"
+        rollback_transaction_chair(name)
       end
     end
 
@@ -106,7 +157,12 @@ class App < Sinatra::Base
     %w[0_Schema.sql 1_DummyEstateData.sql 2_DummyChairData.sql].each do |sql|
       sql_path = sql_dir.join(sql)
       cmd = ['mysql', '-h', db_info[:host], '-u', db_info[:username], "-p#{db_info[:password]}", '-P', db_info[:port], db_info[:database]]
+      cmd2 = ['mysql', '-h', db_info[:host_b], '-u', db_info[:username], "-p#{db_info[:password]}", '-P', db_info[:port], db_info[:database]]
       IO.popen(cmd, 'w') do |io|
+        io.puts File.read(sql_path)
+        io.close
+      end
+      IO.popen(cmd2, 'w') do |io|
         io.puts File.read(sql_path)
         io.close
       end
@@ -117,7 +173,7 @@ class App < Sinatra::Base
 
   get '/api/chair/low_priced' do
     sql = "SELECT * FROM chair WHERE stock > 0 ORDER BY price ASC, id ASC LIMIT #{LIMIT}" # XXX:
-    chairs = db.query(sql).to_a
+    chairs = db_chair.query(sql).to_a
     { chairs: chairs }.to_json
   end
 
@@ -242,8 +298,8 @@ class App < Sinatra::Base
     limit_offset = " ORDER BY rev_popularity ASC, id ASC LIMIT #{per_page} OFFSET #{per_page * page}" # XXX: mysql-cs-bind doesn't support escaping variables for limit and offset
     count_prefix = 'SELECT COUNT(*) as count FROM chair WHERE '
 
-    count = db.xquery("#{count_prefix}#{search_condition}", query_params).first[:count]
-    chairs = db.xquery("#{sqlprefix}#{search_condition}#{limit_offset}", query_params).to_a
+    count = db_chair.xquery("#{count_prefix}#{search_condition}", query_params).first[:count]
+    chairs = db_chair.xquery("#{sqlprefix}#{search_condition}#{limit_offset}", query_params).to_a
 
     { count: count, chairs: chairs }.to_json
   end
@@ -257,7 +313,7 @@ class App < Sinatra::Base
         halt 400
       end
 
-    chair = db.xquery('SELECT * FROM chair WHERE id = ?', id).first
+    chair = db_chair.xquery('SELECT * FROM chair WHERE id = ?', id).first
     unless chair
       logger.info "Requested id's chair not found: #{id}"
       halt 404
@@ -277,11 +333,15 @@ class App < Sinatra::Base
       halt 400
     end
 
-    transaction('post_api_chair') do
-      CSV.parse(params[:chairs][:tempfile].read, skip_blanks: true) do |row|
-        sql = 'INSERT INTO chair(id, name, description, thumbnail, price, height, width, depth, color, features, kind, popularity, stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        db.xquery(sql, *row.map(&:to_s))
-      end
+    chairs = []
+    CSV.parse(params[:chairs][:tempfile].read, skip_blanks: true) do |row|
+      chair = *row.map { |data| "'#{data}'"}
+      chairs << "(#{chair.join(',')})"
+    end
+
+    transaction_chair('post_api_chair') do
+      sql = "INSERT INTO chair(id, name, description, thumbnail, price, height, width, depth, color, features, kind, popularity, stock) VALUES #{chairs.join(",")}"
+      db_chair.query(sql)
     end
 
     status 201
@@ -301,13 +361,11 @@ class App < Sinatra::Base
         halt 400
       end
 
-    transaction('post_api_chair_buy') do |tx_name|
-      chair = db.xquery('SELECT * FROM chair WHERE id = ? AND stock > 0 FOR UPDATE', id).first
-      unless chair
-        rollback_transaction(tx_name) if in_transaction?(tx_name)
-        halt 404
-      end
-      db.xquery('UPDATE chair SET stock = stock - 1 WHERE id = ?', id)
+    chair = db_chair.xquery('SELECT * FROM chair WHERE id = ?', id).first
+    halt 404 unless chair
+
+    transaction_chair('post_api_chair_buy') do |tx_name|
+      db_chair.xquery('UPDATE chair SET stock = stock - 1 WHERE id = ? AND stock > 0', id)
     end
 
     status 200
@@ -319,7 +377,7 @@ class App < Sinatra::Base
 
   get '/api/estate/low_priced' do
     sql = "SELECT * FROM estate ORDER BY rent ASC, id ASC LIMIT #{LIMIT}" # XXX:
-    estates = db.xquery(sql).to_a
+    estates = db_estate.xquery(sql).to_a
     { estates: estates.map { |e| camelize_keys_for_estate(e) } }.to_json
   end
 
@@ -414,8 +472,8 @@ class App < Sinatra::Base
     limit_offset = " ORDER BY rev_popularity ASC, id ASC LIMIT #{per_page} OFFSET #{per_page * page}" # XXX:
     count_prefix = 'SELECT COUNT(*) as count FROM estate WHERE '
 
-    count = db.xquery("#{count_prefix}#{search_condition}", query_params).first[:count]
-    estates = db.xquery("#{sqlprefix}#{search_condition}#{limit_offset}", query_params).to_a
+    count = db_estate.xquery("#{count_prefix}#{search_condition}", query_params).first[:count]
+    estates = db_estate.xquery("#{sqlprefix}#{search_condition}#{limit_offset}", query_params).to_a
 
     { count: count, estates: estates.map { |e| camelize_keys_for_estate(e) } }.to_json
   end
@@ -433,22 +491,9 @@ class App < Sinatra::Base
       halt 400
     end
 
-    longitudes = coordinates.map { |c| c[:longitude] }
-    latitudes = coordinates.map { |c| c[:latitude] }
-    bounding_box = {
-      top_left: {
-        longitude: longitudes.min,
-        latitude: latitudes.min,
-      },
-      bottom_right: {
-        longitude: longitudes.max,
-        latitude: latitudes.max,
-      },
-    }
-
     coordinates_to_text = "'POLYGON((%s))'" % coordinates.map { |c| '%f %f' % c.values_at(:latitude, :longitude) }.join(',')
     sql = 'SELECT * FROM estate WHERE ST_Contains(ST_PolygonFromText(%s), point) ORDER BY rev_popularity, id LIMIT %s' % [coordinates_to_text, NAZOTTE_LIMIT]
-    nazotte_estates = db.query(sql).to_a
+    nazotte_estates = db_estate.query(sql).to_a
     {
       estates: nazotte_estates.map { |e| camelize_keys_for_estate(e) },
       count: nazotte_estates.size,
@@ -464,7 +509,7 @@ class App < Sinatra::Base
         halt 400
       end
 
-    estate = db.xquery('SELECT * FROM estate WHERE id = ?', id).first
+    estate = db_estate.xquery('SELECT * FROM estate WHERE id = ?', id).first
     unless estate
       logger.info "Requested id's estate not found: #{id}"
       halt 404
@@ -479,11 +524,15 @@ class App < Sinatra::Base
       halt 400
     end
 
-    transaction('post_api_estate') do
-      CSV.parse(params[:estates][:tempfile].read, skip_blanks: true) do |row|
-        sql = 'INSERT INTO estate(id, name, description, thumbnail, address, latitude, longitude, rent, door_height, door_width, features, popularity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        db.xquery(sql, *row.map(&:to_s))
-      end
+    estates = []
+    CSV.parse(params[:estates][:tempfile].read, skip_blanks: true) do |row|
+      estate = *row.map { |data| "'#{data}'"}
+      estates << "(#{estate.join(',')})"
+    end
+
+    transaction_estate('post_api_estate') do
+      sql = "INSERT INTO estate(id, name, description, thumbnail, address, latitude, longitude, rent, door_height, door_width, features, popularity) VALUES #{estates.join(',')}"
+      db_estate.query(sql)
     end
 
     status 201
@@ -503,7 +552,7 @@ class App < Sinatra::Base
         halt 400
       end
 
-    estate = db.xquery('SELECT * FROM estate WHERE id = ?', id).first
+    estate = db_estate.xquery('SELECT * FROM estate WHERE id = ?', id).first
     unless estate
       logger.error "Requested id's estate not found: #{id}"
       halt 404
@@ -525,7 +574,7 @@ class App < Sinatra::Base
         halt 400
       end
 
-    chair = db.xquery('SELECT * FROM chair WHERE id = ?', id).first
+    chair = db_chair.xquery('SELECT * FROM chair WHERE id = ?', id).first
     unless chair
       logger.error "Requested id's chair not found: #{id}"
       halt 404
@@ -536,7 +585,7 @@ class App < Sinatra::Base
     d = chair[:depth]
 
     sql = "SELECT * FROM estate WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY rev_popularity ASC, id ASC LIMIT #{LIMIT}" # XXX:
-    estates = db.xquery(sql, w, h, w, d, h, w, h, d, d, w, d, h).to_a
+    estates = db_estate.xquery(sql, w, h, w, d, h, w, h, d, d, w, d, h).to_a
 
     { estates: estates.map { |e| camelize_keys_for_estate(e) } }.to_json
   end
