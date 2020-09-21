@@ -50,6 +50,7 @@ services:
       MYSQL_HOST: mysql
       MYSQL_B_HOST: mysql_b
       SERVER_PORT: 1323
+      RACK_ENV: production
     ports:
       - "1323:1323"
     depends_on:
