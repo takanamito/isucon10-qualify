@@ -238,7 +238,7 @@ class App < Sinatra::Base
 
     sqlprefix = 'SELECT * FROM chair WHERE '
     search_condition = search_queries.join(' AND ')
-    limit_offset = " ORDER BY popularity DESC, id ASC LIMIT #{per_page} OFFSET #{per_page * page}" # XXX: mysql-cs-bind doesn't support escaping variables for limit and offset
+    limit_offset = " ORDER BY rev_popularity ASC, id ASC LIMIT #{per_page} OFFSET #{per_page * page}" # XXX: mysql-cs-bind doesn't support escaping variables for limit and offset
     count_prefix = 'SELECT COUNT(*) as count FROM chair WHERE '
 
     count = db.xquery("#{count_prefix}#{search_condition}", query_params).first[:count]
@@ -410,7 +410,7 @@ class App < Sinatra::Base
 
     sqlprefix = 'SELECT * FROM estate WHERE '
     search_condition = search_queries.join(' AND ')
-    limit_offset = " ORDER BY popularity DESC, id ASC LIMIT #{per_page} OFFSET #{per_page * page}" # XXX:
+    limit_offset = " ORDER BY rev_popularity ASC, id ASC LIMIT #{per_page} OFFSET #{per_page * page}" # XXX:
     count_prefix = 'SELECT COUNT(*) as count FROM estate WHERE '
 
     count = db.xquery("#{count_prefix}#{search_condition}", query_params).first[:count]
@@ -445,7 +445,7 @@ class App < Sinatra::Base
       },
     }
 
-    sql = 'SELECT * FROM estate WHERE latitude <= ? AND latitude >= ? AND longitude <= ? AND longitude >= ? ORDER BY popularity DESC, id ASC'
+    sql = 'SELECT * FROM estate WHERE latitude <= ? AND latitude >= ? AND longitude <= ? AND longitude >= ? ORDER BY rev_popularity ASC, id ASC'
     estates = db.xquery(sql, bounding_box[:bottom_right][:latitude], bounding_box[:top_left][:latitude], bounding_box[:bottom_right][:longitude], bounding_box[:top_left][:longitude])
 
     estates_in_polygon = []
@@ -546,7 +546,7 @@ class App < Sinatra::Base
     h = chair[:height]
     d = chair[:depth]
 
-    sql = "SELECT * FROM estate WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY popularity DESC, id ASC LIMIT #{LIMIT}" # XXX:
+    sql = "SELECT * FROM estate WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY rev_popularity ASC, id ASC LIMIT #{LIMIT}" # XXX:
     estates = db.xquery(sql, w, h, w, d, h, w, h, d, d, w, d, h).to_a
 
     { estates: estates.map { |e| camelize_keys_for_estate(e) } }.to_json
