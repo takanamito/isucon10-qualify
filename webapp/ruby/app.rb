@@ -7,7 +7,9 @@ class App < Sinatra::Base
   LIMIT = 20
   NAZOTTE_LIMIT = 50
   CHAIR_SEARCH_CONDITION = JSON.parse(File.read('../fixture/chair_condition.json'), symbolize_names: true)
+  CHAIR_SEARCH_CONDITION_JSON = CHAIR_SEARCH_CONDITION.to_json
   ESTATE_SEARCH_CONDITION = JSON.parse(File.read('../fixture/estate_condition.json'), symbolize_names: true)
+  ESTATE_SEARCH_CONDITION_JSON = ESTATE_SEARCH_CONDITION.to_json
 
   configure :development do
     require 'sinatra/reloader'
@@ -372,7 +374,7 @@ class App < Sinatra::Base
   end
 
   get '/api/chair/search/condition' do
-    CHAIR_SEARCH_CONDITION.to_json
+    CHAIR_SEARCH_CONDITION_JSON
   end
 
   get '/api/estate/low_priced' do
@@ -562,7 +564,7 @@ class App < Sinatra::Base
   end
 
   get '/api/estate/search/condition' do
-    ESTATE_SEARCH_CONDITION.to_json
+    ESTATE_SEARCH_CONDITION_JSON
   end
 
   get '/api/recommended_estate/:id' do
