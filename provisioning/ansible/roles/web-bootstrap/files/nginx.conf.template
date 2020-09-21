@@ -32,13 +32,13 @@ http {
                                 "\tapptime:$upstream_response_time"
                                 "\tvhost:$host";
 
-    access_log  /var/log/nginx/access.log  main;
+    # access_log  /var/log/nginx/access.log  main;
 
     server {
         listen 80 default_server;
         listen [::]:80 default_server;
 
-        access_log /var/log/nginx/ltsv_access.log ltsv;
+        # access_log /var/log/nginx/ltsv_access.log ltsv;
 
         if ( $http_user_agent ~ "ISUCONbot(-Mobile)?" ) {
              return 503;
